@@ -65,7 +65,6 @@ function rmse(x; y=0)
     return sqrt(mean_square_error)
 end
 
-
 function net_present_value(c::Array{T,1}, r::Real) where T <: Real
     n = length(c);
     return sum(c .* (1 + r).^(-(0:n-1)))
