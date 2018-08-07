@@ -1,4 +1,29 @@
 
+function rotate_mat2d{T <: Real}(angle::T; ccw=true)
+    #= Helper for rotating points in 2d space
+    
+    Builds the rotation matrix specified by the angle and the direction of rotation
+    
+    Args :
+        angle : angle in radians of rotation
+        ccw : whether the angle is measured counter clockwise wrt the positive x axis
+    
+    Returns :
+        A 2x2 rotation matrix
+    =#
+
+    rotate_mat = zeros(2,2);
+    if ccw
+        rotate_mat = [cos(angle) -sin(angle);
+                      sin(angle) cos(angle)];
+    else
+        rotate_mat = [cos(angle) sin(angle);
+                      -sin(angle) cos(angle)];
+    end
+    
+    return rotate_mat;
+end
+
 function vandermonde(x, n)
     #= Generates a vandermonde matrix using the entries of x
 
@@ -37,3 +62,307 @@ function rmse(x; y=0)
 
     return sqrt(mean_square_error)
 end
+<<<<<<< Updated upstream
+=======
+
+function net_present_value(c::Array{T,1}, r::Real) where T <: Real
+    n = length(c);
+    return sum(c .* (1 + r).^(-(0:n-1)))
+end
+
+function net_present_value_grad(c::Array{T,1}, r::Real) where T<:Real
+    n = length(c);
+    return sum(-(0:n-1) .* c .* (1 + r).^(-(1:n)))
+end
+
+function state_propagation_matrix(A::Array{T,2}, B::Array{T,2}, n::Real) where T <: Real
+    #= Returns state propagation matrix of a linear dynamical system
+
+    Given a discrete time linear dynamical system of the form 
+
+                x[n] = A * x[n] + B * u[n]
+
+    we can expand the recursion to get x[n] as a function of the initial 
+    state and the inputs at each time
+
+            x[n] = A^{n-1} * x[1] + A^{n-2} * B * u[1] + ... + A^2B * u[n-3] + AB * u[n-2] + B * u[n-1]
+        
+    The matrix multiplying [u[1]; u[2]; u[3];...; u[n-1]] is the matrix 
+    returned by this function. In the case where n is the size of the 
+    state, this the controllability matrix of the system.
+
+    Args :
+        A : The state evolution matrix. Must be square
+        B : Input to Output matrix
+        n : Indexed from 1, the desired state needed to compute
+    
+    Returns :
+        The matrix A^{n-1} needed for propagating the initial state and
+        the matrix [A^{n-2}B A^{n-3}B ... A^2B AB B] for propagating the
+        inputes
+
+    =#
+
+    if size(A,1) != size(A,2)
+        error("Matrix 'A' must be square");
+    end
+    if size(A,1) != size(B,1)
+        error("Matrix 'A' and 'B' must have same row num")
+    end
+
+    num_states = size(A,1);
+    num_inputs = size(B, 2);
+
+    C = zeros(num_states, (n - 1) * num_inputs);
+
+    Apow = eye(num_states, num_states)
+
+    for i in n-1:-1:1
+        left = (i - 1) * num_inputs + 1;
+        right = num_inputs * i;
+        C[1:end, left:right] = Apow * B;
+        Apow *= A;
+    end
+
+    return  Apow, C
+end
+
+function propagate_linear_dyanmical_system(A::Array{T,2}, B::Array{T,2}, U::Array{T,2}, xinit::Array{T,1}) where T <: Real
+    #= Given the initial state, the inputs and the matrices for an LDS compute the trajectory
+    
+    Simulate the LDS given the inputs, inital state, the input-output matrix and the state 
+    transitino matrix.
+    =#
+
+    num_states = size(A, 1);
+    num_inputs = size(U, 1);
+    num_time_steps = size(U, 2);
+
+    xinit = vec(xinit);
+    states = zeros(num_states, num_time_steps + 1);
+
+    states[:,1] = xinit;
+    for i in 1:num_time_steps
+        states[:, i+1] = A * states[:,i] + B * U[:,i];
+    end
+     
+    return states
+end
+
+function lqr_matrix(A::Array{T,2}, B::Array{T,2}, C::Array{T,2}, xinit::Array{T,1}, tfinal::N, rho::Real) where T <: Real where N <: Int64
+    n = size(A, 1);
+    m = size(B, 2);
+    
+    upLeft = eye(tfinal * n, tfinal * n);
+    for i in 1:num_time_steps
+        lowerInd = n * (i - 1) + 1;
+        upperInd = lowerInd + n - 1;
+        upLeft[lowerInd:upperInd, lowerInd:upperInd] = C;
+    end
+
+    lowRight = sqrt(rho) * eye((tfinal - 1) * m, (tfinal - 1) * m);
+    Atilde = [upLeft zeros(tfinal*n,(tfinal - 1) * m); 
+              zeros((tfinal-1) * m, tfinal*n) lowRight];
+    btilde = zeros(size(Atilde, 1), 1);
+    
+    upperLeft = zeros((tfinal - 1) * n, n * tfinal);
+    subMat = [A -eye(n, n)];
+
+    for i in 1:(tfinal-1)
+        lowerInd = n*(i-1)+1;
+        upperColInd = lowerInd + 2*n - 1;
+        upperRowInd = lowerInd + n - 1;
+        upperLeft[lowerInd:upperRowInd, lowerInd:upperColInd] = subMat;
+    end
+
+    upperRight = zeros(n * (tfinal - 1), m * (tfinal - 1));
+    lowerRowInd = 1;
+    lowerColInd = 1;
+    upperRowInd = n;
+    upperColInd = m;
+    for i in 1:(tfinal - 1)
+        upperRight[lowerRowInd:upperRowInd,lowerColInd:upperColInd] = B;
+        lowerRowInd += n;
+        lowerColInd += m;
+        upperRowInd += n;
+        upperColInd += m;
+    end
+
+    lowerLeft = [eye(n, n) zeros(n, n * (tfinal - 1))];
+
+    Ctilde = [upperLeft upperRight; lowerLeft zeros(n, m * (tfinal - 1))];
+    dtilde = zeros(size(Ctilde,1),1);
+    dtilde[end-n+1:end,1] = xinit;
+    
+    return Atilde, Ctilde, dtilde
+end
+
+
+function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function, J::Function; xinit=Inf, max_iters=1000, atol=1e-6)
+    #= Implements the levenberg marquardt heuristic for finding roots of m nonlinear equations in n unknowns
+    
+    Args :
+        input_output_shape : a tuple of the form (n, m) giving the number of variables
+                             and the number of outputs respectively
+        f : a function that takes 'input_dim' inputs and returns m outputs
+        J : a function to evaluate the Jacobian of 'f'
+        xinit : initial iterate for warm starting
+        max_iters : the maximum number of iterations to perform 
+        atol : the absolute tolerance of the root mean square of the Jacobian
+
+    Returns :
+        xvals : the trajectory of the gradient descent
+        fvals : the value of the objective along the trajectory
+        gradnorm : the norm of the gradient along the trajectory
+        lambdavals : the values of the penalty parameter for each iteration of the algo
+
+    =#
+
+    n = input_output_shape[1];
+    m = input_output_shape[2];
+
+    if any(isinf.(xinit))                 
+        xinit = vec(randn(n));
+    end
+    
+    lambdavals = [1];
+    xvals = hcat(xinit);
+    xcurr = vec(xvals);
+    fvals = vcat(f(xcurr));
+
+    total_deriv = J(xcurr);
+    gradnorm = rmse(2*total_deriv' * f(xcurr));
+
+    for i in 1:max_iters
+        while true
+            if m == 1
+                A = total_deriv[1]^2 + lambdavals[i];          
+                b = total_deriv[1] * fvals[i];
+                lm_step = b / A ;
+                xcurr = xvals[i] - lm_step;
+            else
+                A = total_deriv' * total_deriv + lambdavals[i] * eye(n, n); 
+                b = total_deriv' * fvals[:,i];
+                lm_step = A \ b;
+
+                xcurr = xvals[:,i] - lm_step;
+            end
+            
+            if sum(f(xcurr).^2) > sum(fvals[:,i].^2)
+                lambdavals[i] = 2 * lambdavals[i];
+            else
+                lambdavals = hcat(lambdavals, lambdavals[i] * 0.8);
+                break
+            end
+        end
+
+        xvals = hcat(xvals, xcurr);
+        fvals = hcat(fvals, f(xcurr));
+        total_deriv = J(xcurr); 
+        gradnorm = hcat(gradnorm, rmse(2*total_deriv' * f(xcurr)));
+        if rmse(2*total_deriv' * f(xcurr)) <= atol                   # From grad ||f(x)||^2
+            break
+        end
+    end
+    
+    return xvals, fvals, gradnorm, lambdavals
+end
+
+function gauss_newton(input_output_shape::Tuple{Int64,Int64}, f::Function, J::Function; xinit=Inf, max_iters=1000, atol=1e-6)
+    #= Use the gauss-newton method to find extrema
+    
+    The Gauss-Newton method is used to approximately solve the non-linear least
+    squares problem (NNLS). The method employs only first order information to 
+    locate optima
+
+    Args :
+        input_dim : dimension of the input to the function to be minimized
+        f : a function representing the residuals of the m nonlinear equations
+        J : a function to evaluate the jacobian of 'f' 
+        xinit : initial iterate for warm starting
+        max_iters : the maximum number of newton steps to take
+        atol : the absolute tolerance of the root mean square of the jacobian
+
+    Returns :
+        xvals : the trajectory of the gradient descent
+        fvals : the value of the objective along the trajectory
+        gradnorm : the norm of the jacobian along the trajectory
+
+    =#
+
+    n = input_output_shape[1];
+    m = input_output_shape[2];
+
+    if any(isinf.(xinit))                 
+        xinit = vec(randn(n));
+    end
+    
+    xvals = hcat(xinit);
+    xcurr = vec(xvals);
+    fvals = vcat(f(xcurr));
+
+    total_deriv = J(xcurr);
+    gradnorm = rmse(2*total_deriv' * f(xcurr));
+
+    for i=1:max_iters
+        if m == 1
+            gn_step = fvals / total_deriv[0];
+            xcurr = xvals[i] - gn_step;
+        else
+            A = total_deriv' * total_deriv; 
+            b = total_deriv' * fvals[:,i];
+            gn_step = A \ b;
+            xcurr = xvals[:,i] - gn_step;
+        end
+
+        xvals = hcat(xvals, xcurr);
+        fvals = hcat(fvals, f(xcurr));
+        total_deriv = J(xcurr);
+        gradnorm = hcat(gradnorm, rmse(2*total_deriv' * f(xcurr)));
+        if rmse(2*total_deriv' * f(xcurr)) <= atol                   # From grad ||f(x)||^2
+            break
+        end
+    end
+    
+    return xvals, fvals, gradnorm
+end
+
+function parametric2ellipse_coords(semiaxis_lengths::Array{T,1}; center=[0 0], ccw_angle=0, numpoints=1000) where T <: Real
+    #= Helper for plotting a (possibly degenerate) 2D ellipse given semi-major/minor
+    axes lengths, ellipse center coordinates and angle off the positive x axis
+    
+    Given the positve semidefinite matrix of a quadratic form specifying an ellipse
+    in standard form x^T A x = 1, the center of the ellipse, the angle to rotate the
+    ellipse wrt the positive x-axis, and the number of points desired for plotting, 
+    an array containing the x, y coordinates of various points on the ellipse are returned
+    
+    Args :
+        semiaxis_lengths : array of the form [a b] where a is half the length of the axis aligned
+                      ellipse along the x-axis and b is half the length along the y-axis (before
+                      rotation)
+        center : array of the x and y coordinates of the center of the ellipse
+        ccw_angle : The counter clockwise angle (in rad) to rotate the ellipse wrt
+                    the positive x-axis
+        num_points : an integer indicating the number of xy pairs on the ellipse to return
+    
+    Returns :
+        A 2 x numpoints array where the x and y coordinates are in the 1st and 2nd row 
+        respectively
+    =#
+
+    if size(vec(center))[1] != 2
+        error("Parameter 'center' must be of size 2");
+    end
+
+    if size(vec(semiaxis_lengths))[1] != 2
+        error("Parameter 'semiaxis_lengths' must be of size 2");
+    end
+    center = vec(center);
+    semiaxis_lengths = vec(semiaxis_lengths);
+    
+    theta = vec(linspace(0, 2*pi, numpoints));
+    onaxis_ellipse = semiaxis_lengths .* [cos.(theta) sin.(theta)]';
+    
+    return center .+ rotate_mat2d(ccw_angle) * onaxis_ellipse;
+end
+>>>>>>> Stashed changes
