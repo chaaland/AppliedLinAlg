@@ -80,7 +80,7 @@ function state_propagation_matrix(A::Array{T,2}, B::Array{T,2}, n::Real) where T
 
     Given a discrete time linear dynamical system of the form 
 
-                x[n] = A * x[n] + B * u[n]
+                x[n + 1] = A * x[n] + B * u[n]
 
     we can expand the recursion to get x[n] as a function of the initial 
     state and the inputs at each time
@@ -127,11 +127,11 @@ function state_propagation_matrix(A::Array{T,2}, B::Array{T,2}, n::Real) where T
     return  Apow, C
 end
 
-function propagate_linear_dyanmical_system(A::Array{T,2}, B::Array{T,2}, U::Array{T,2}, xinit::Array{T,1}) where T <: Real
+function propagate_linear_dyanmical_system(A::Array{T,2}, B::Array{T,2}, U::Array{T,2}, xinit::Vector{T}) where T <: Real
     #= Given the initial state, the inputs and the matrices for an LDS compute the trajectory
     
     Simulate the LDS given the inputs, inital state, the input-output matrix and the state 
-    transitino matrix. The discrete time linear dynamical system has recurrence
+    transition matrix. The discrete time linear dynamical system has recurrence
 
                     x[k] = A * x[k-1] + B * u[k-1]
 
@@ -203,20 +203,15 @@ function lqr_matrix(A::Array{T,2}, B::Array{T,2}, C::Array{T,2}, xinit::Vector{T
             minimize    ||Atilde * x - btilde||^2
             subject to  Ctilde * x = dtilde
 
-    This function returns the matrices needed for the problem formulation
-
     Args :
-        A : The n x n state evolution matrix
-        B : Input to Output matrix of size m x n 
-        C : Input to Observation matrix of size p x n
-        xinit : initial state of the system as an n x 1 vector
-        tfinal : determines the number of inputs to choose for the linear quadratic control problem
-        rho : weighting of the input norm in the least squares objective trading off state size with input size
-
-    Returns :
-        The matrices needed to formulate the constrained least squares problem for linear quadratic control
-        
+        A : n x n state transition matrix 
+        B : n x m input-output matrix
+        C : state to output matrix giving the observation y given the state x 
+        tfinal : number of times to model 
+        rho : the weight of the tradeoff between having small inputs 
+        xinit : n vector giving the starting state of the system
     =#
+
     n = size(A, 1);
     m = size(B, 2);
     
@@ -287,6 +282,15 @@ function constrained_least_squares(A::Array{T,2}, b::Vector{T}, C::Array{T,2}, d
     return xstar
 end
 
+function constrained_least_squares_kkt(A::Array{T,2}, b::Vector{T}, C::Array{T,2}, d::Vector{T}) where T <: Real
+    k = size(C,1);
+    kktMatrix = [2*A'*A C'; 
+                C zeros(k, k)];
+    kktRHS = [2*A'*b; d];
+    
+    return kktMatrix, kktRHS
+end
+
 function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function, J::Function; xinit=Inf, max_iters=1000, atol=1e-6)
     #= Implements the levenberg marquardt heuristic for finding roots of m nonlinear equations in n unknowns
     
@@ -305,6 +309,9 @@ function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function
         stop_criteria : root mean square of twice the transposed jacobian times the evaluation of the function
         lambdavals : the values of the penalty parameter for each iteration of the algo
 
+
+        gradnorm : the norm of the gradient along the trajectory
+        lambdavals : the values of the penalty parameter for each iteration of the algo
     =#
     LAMBDA_MAXIMUM = 1e10;
     STEPSZ_MINIMUM = 1e-5;
@@ -565,4 +572,7 @@ function parametric2ellipse_coords(semiaxis_lengths::Array{T,1}; center=[0 0], c
     
     return center .+ rotate_mat2d(ccw_angle) * onaxis_ellipse;
 end
+<<<<<<< HEAD
 
+=======
+>>>>>>> New utility functions
