@@ -62,8 +62,7 @@ function rmse(x; y=0)
 
     return sqrt(mean_square_error)
 end
-<<<<<<< Updated upstream
-=======
+
 
 function net_present_value(c::Array{T,1}, r::Real) where T <: Real
     n = length(c);
@@ -213,7 +212,7 @@ function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function
     Returns :
         xvals : the trajectory of the gradient descent
         fvals : the value of the objective along the trajectory
-        gradnorm : the norm of the gradient along the trajectory
+        stop_criteria : root mean square of twice the transposed jacobian times the evaluation of the function
         lambdavals : the values of the penalty parameter for each iteration of the algo
 
     =#
@@ -231,24 +230,20 @@ function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function
     fvals = vcat(f(xcurr));
 
     total_deriv = J(xcurr);
-    gradnorm = rmse(2*total_deriv' * f(xcurr));
-
+    stop_criteria = rmse(2 * total_deriv' * f(xcurr));
     for i in 1:max_iters
         while true
             if m == 1
-                A = total_deriv[1]^2 + lambdavals[i];          
-                b = total_deriv[1] * fvals[i];
-                lm_step = b / A ;
-                xcurr = xvals[i] - lm_step;
+                A = vcat(total_deriv, sqrt(lambdavals[i]) * eye(n,n));
+                b = vcat(total_deriv .* xvals[:,i] .- fvals[:,i], sqrt(lambdavals[i]) * xvals[:,i]);
+                xcurr = A \ b;
             else
-                A = total_deriv' * total_deriv + lambdavals[i] * eye(n, n); 
-                b = total_deriv' * fvals[:,i];
-                lm_step = A \ b;
-
-                xcurr = xvals[:,i] - lm_step;
+                A = vcat(total_deriv, sqrt(lambdavals[i]) * eye(n,n));
+                b = vcat(total_deriv * xvals[:,i] - fvals[:,i], sqrt(lambdavals[i]) * xvals[:,i]);
+                xcurr = A \ b;
             end
-            
-            if sum(f(xcurr).^2) > sum(fvals[:,i].^2)
+
+            if norm(f(xcurr)) > norm(fvals[:,i])
                 lambdavals[i] = 2 * lambdavals[i];
             else
                 lambdavals = hcat(lambdavals, lambdavals[i] * 0.8);
@@ -259,13 +254,98 @@ function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function
         xvals = hcat(xvals, xcurr);
         fvals = hcat(fvals, f(xcurr));
         total_deriv = J(xcurr); 
-        gradnorm = hcat(gradnorm, rmse(2*total_deriv' * f(xcurr)));
-        if rmse(2*total_deriv' * f(xcurr)) <= atol                   # From grad ||f(x)||^2
+        stop_criteria = hcat(stop_criteria, rmse(2 * total_deriv' * f(xcurr)));
+        if stop_criteria[end] <= atol                   # From grad ||f(x)||^2
             break
         end
     end
+
+    return xvals, fvals, stop_criteria, lambdavals
+end
+
+function augmented_lagrangian(input_output_shape::Tuple{Int64,Int64}, f::Function, J1::Function, g::Function, J2::Function; xinit=Inf)
+    #= Solves the constrained non-linear least squares by augmenting the lagrangian with the penalty objective.
+
+    Args :
+    Returns :
+     
+    =#
+    n = input_output_shape[1];
+    p = size(g(zeros(n)), 1);
+
+    if any(isinf.(xinit))                 
+        xinit = vec(randn(n));
+    end
+
+    mu = hcat(1);
+    xtraj = hcat(xinit);
+    ztraj = vec(zeros(p));
+
+    for i = 1:max_iters
+        sqrtmu = sqrt(mu[i])
+        xvals, fvals, gradnorm, lambdavals = levenberg_marquardt(input_output_shape
+                                                                ,x -> vcat(f(x), sqrtmu * g(x) + 0.5 * ztraj[:,i]/sqrtmu) 
+                                                                ,x -> vcat(J1(x), sqrt(mu[i]) * J2(x))
+                                                                ,xinit=xtraj[:,i]);
+        ztraj = hcat(ztraj, ztraj[:,i] + 2 * mu[i] * g(xvals[:,end]));
+
+        if g(xvals[:,end] < 0.25 * norm())
+        else
+            mu = hcat(mu, 2 * mu[i]);
+        end
+    end
+end
+
+function penalty_algo(input_output_shape::Tuple{Int64,Int64}, f::Function, J1::Function, g::Function, J2::Function; xinit=Inf, max_iters=1000, atol=1e-6)
+    #= Naive penalty algo for non-linear equality constrained optimization
     
-    return xvals, fvals, gradnorm, lambdavals
+    A method for solving the minimization of ||f(x)||^2 subject to g(x) = 0 
+    where g : R^n -> R^m and potentially non linear. The method solves a 
+    sequence of minimizations of the form 
+
+                ||f(x)||^2 + mu * ||g(x)||^2
+
+    as a heuristic (where mu is steadily increased each iteration).
+
+    Args :
+        input_output_shape : a tuple of the form (n, m) giving the number of variables
+                             and the number of outputs respectively
+        f : a function that takes 'n' inputs and returns m outputs
+        J1 : a function to evaluate the Jacobian of 'f'
+        g : a function that takes 'n' inputs and returns p outputs
+        J2 : a functtion to evaluate the Jacobian of 'g'
+        xinit : an initial point used for warm starting the algo
+        max_iters : maximum number of iterations 
+        atol : tolerance of the root mean square error of the equality condition
+    
+    Returns :
+        xtraj : the sequence of iterates in the minimization
+        mu : the sequence of penalties
+    =#
+
+    n = input_output_shape[1];
+
+    if any(isinf.(xinit))                 
+        xinit = vec(randn(n));
+    end
+
+    mu = hcat(1);
+    xtraj = hcat(xinit);
+
+    for i = 1:max_iters
+        xvals, fvals, gradnorm, lambdavals = levenberg_marquardt(input_output_shape
+                                                                ,x -> vcat(f(x), sqrt(mu[i]) * g(x)) 
+                                                                ,x -> vcat(J1(x), sqrt(mu[i]) * J2(x))
+                                                                ,xinit=xtraj[:,i]);
+        xtraj = hcat(xtraj, xvals[:,end]);
+        mu = hcat(mu, 2*mu[i]);
+
+        if rmse(g(xtraj[:,end])) <= atol 
+            return xtraj, mu 
+        end
+    end
+
+    return xtraj, mu 
 end
 
 function gauss_newton(input_output_shape::Tuple{Int64,Int64}, f::Function, J::Function; xinit=Inf, max_iters=1000, atol=1e-6)
@@ -306,13 +386,13 @@ function gauss_newton(input_output_shape::Tuple{Int64,Int64}, f::Function, J::Fu
 
     for i=1:max_iters
         if m == 1
-            gn_step = fvals / total_deriv[0];
-            xcurr = xvals[i] - gn_step;
+            A = vcat(total_deriv);
+            b = vcat(total_deriv .* xvals[:,i] .- fvals[:,i]);
+            xcurr = A \ b;
         else
-            A = total_deriv' * total_deriv; 
-            b = total_deriv' * fvals[:,i];
-            gn_step = A \ b;
-            xcurr = xvals[:,i] - gn_step;
+            A = vcat(total_deriv);
+            b = vcat(total_deriv * xvals[:,i] - fvals[:,i]);
+            xcurr = A \ b;
         end
 
         xvals = hcat(xvals, xcurr);
@@ -365,4 +445,3 @@ function parametric2ellipse_coords(semiaxis_lengths::Array{T,1}; center=[0 0], c
     
     return center .+ rotate_mat2d(ccw_angle) * onaxis_ellipse;
 end
->>>>>>> Stashed changes
