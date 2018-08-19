@@ -216,6 +216,8 @@ function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function
         lambdavals : the values of the penalty parameter for each iteration of the algo
 
     =#
+    LAMBDA_MAXIMUM = 1e10;
+    STEPSZ_MINIMUM = 1e-5;
 
     n = input_output_shape[1];
     m = input_output_shape[2];
@@ -243,11 +245,18 @@ function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function
                 xcurr = A \ b;
             end
 
-            if norm(f(xcurr)) > norm(fvals[:,i])
-                lambdavals[i] = 2 * lambdavals[i];
-            else
+
+            if norm(f(xcurr)) < norm(fvals[:,i])
                 lambdavals = hcat(lambdavals, lambdavals[i] * 0.8);
                 break
+            elseif 2 * lambdavals[i] > LAMBDA_MAXIMUM
+                lambdavals = hcat(lambdavals, lambdavals[i]);
+                break;
+            elseif rmse(xcurr - xvals[:,i]) < STEPSZ_MINIMUM
+                lambdavals = hcat(lambdavals, lambdavals[i]);
+                break;
+            else
+                lambdavals[i] = 2 * lambdavals[i];
             end
         end
 
@@ -263,7 +272,7 @@ function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function
     return xvals, fvals, stop_criteria, lambdavals
 end
 
-function augmented_lagrangian(input_output_shape::Tuple{Int64,Int64}, f::Function, J1::Function, g::Function, J2::Function; xinit=Inf)
+function augmented_lagrangian(input_output_shape::Tuple{Int64,Int64,Int64}, f::Function, J1::Function, g::Function, J2::Function; xinit=Inf, max_iters=100, atol=1e-6)
     #= Solves the constrained non-linear least squares by augmenting the lagrangian with the penalty objective.
 
     Args :
@@ -271,7 +280,8 @@ function augmented_lagrangian(input_output_shape::Tuple{Int64,Int64}, f::Functio
      
     =#
     n = input_output_shape[1];
-    p = size(g(zeros(n)), 1);
+    m = input_output_shape[2];
+    p = input_output_shape[3];
 
     if any(isinf.(xinit))                 
         xinit = vec(randn(n));
@@ -280,23 +290,33 @@ function augmented_lagrangian(input_output_shape::Tuple{Int64,Int64}, f::Functio
     mu = hcat(1);
     xtraj = hcat(xinit);
     ztraj = vec(zeros(p));
+    cume_iters = hcat(0);
 
     for i = 1:max_iters
         sqrtmu = sqrt(mu[i])
-        xvals, fvals, gradnorm, lambdavals = levenberg_marquardt(input_output_shape
+        xvals, fvals, gradnorm, lambdavals = levenberg_marquardt((n, m + p)
                                                                 ,x -> vcat(f(x), sqrtmu * g(x) + 0.5 * ztraj[:,i]/sqrtmu) 
                                                                 ,x -> vcat(J1(x), sqrt(mu[i]) * J2(x))
                                                                 ,xinit=xtraj[:,i]);
-        ztraj = hcat(ztraj, ztraj[:,i] + 2 * mu[i] * g(xvals[:,end]));
+        xtraj = hcat(xtraj, xvals[:,end]);
+        cume_iters = hcat(cume_iters, cume_iters[i] + size(xvals,2));
+        ztraj = hcat(ztraj, ztraj[:,i] + 2 * mu[i] * g(xtraj[:,i+1]));
 
-        if g(xvals[:,end] < 0.25 * norm())
-        else
+        if norm(g(xtraj[:,i+1])) >= 0.25 * norm(g(xtraj[:,i]))
             mu = hcat(mu, 2 * mu[i]);
+        else
+            mu = hcat(mu, mu[i]);
+        end
+
+        if norm(g(xtraj[:,i+1])) <= atol 
+            return xtraj, mu, cume_iters;
         end
     end
+
+    return xtraj, mu, cume_iters
 end
 
-function penalty_algo(input_output_shape::Tuple{Int64,Int64}, f::Function, J1::Function, g::Function, J2::Function; xinit=Inf, max_iters=1000, atol=1e-6)
+function penalty_algo(input_output_shape::Tuple{Int64,Int64,Int64}, f::Function, J1::Function, g::Function, J2::Function; xinit=Inf, max_iters=1000, atol=1e-6)
     #= Naive penalty algo for non-linear equality constrained optimization
     
     A method for solving the minimization of ||f(x)||^2 subject to g(x) = 0 
@@ -324,6 +344,8 @@ function penalty_algo(input_output_shape::Tuple{Int64,Int64}, f::Function, J1::F
     =#
 
     n = input_output_shape[1];
+    m = input_output_shape[2];
+    p = input_output_shape[3];
 
     if any(isinf.(xinit))                 
         xinit = vec(randn(n));
@@ -331,21 +353,27 @@ function penalty_algo(input_output_shape::Tuple{Int64,Int64}, f::Function, J1::F
 
     mu = hcat(1);
     xtraj = hcat(xinit);
-
+    cume_iters = hcat(0);
     for i = 1:max_iters
-        xvals, fvals, gradnorm, lambdavals = levenberg_marquardt(input_output_shape
-                                                                ,x -> vcat(f(x), sqrt(mu[i]) * g(x)) 
-                                                                ,x -> vcat(J1(x), sqrt(mu[i]) * J2(x))
+        sqrtmu = sqrt(mu[i]);
+        objective = vcat(f(xtraj[:,i]), sqrtmu * g(xtraj[:,i]));
+        deriv = vcat(J1(xtraj[:,i]), sqrtmu * J2(xtraj[:,i]));
+
+        xvals, fvals, gradnorm, lambdavals = levenberg_marquardt((n, m + p)
+                                                                ,x -> vcat(f(x), sqrtmu * g(x)) 
+                                                                ,x -> vcat(J1(x), sqrtmu * J2(x))
                                                                 ,xinit=xtraj[:,i]);
+
         xtraj = hcat(xtraj, xvals[:,end]);
         mu = hcat(mu, 2*mu[i]);
+        cume_iters = hcat(cume_iters, cume_iters[i] + size(xvals,2));
 
         if rmse(g(xtraj[:,end])) <= atol 
-            return xtraj, mu 
+            return xtraj, mu, cume_iters 
         end
     end
 
-    return xtraj, mu 
+    return xtraj, mu, cume_iters 
 end
 
 function gauss_newton(input_output_shape::Tuple{Int64,Int64}, f::Function, J::Function; xinit=Inf, max_iters=1000, atol=1e-6)
