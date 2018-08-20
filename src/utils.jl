@@ -572,7 +572,3 @@ function parametric2ellipse_coords(semiaxis_lengths::Array{T,1}; center=[0 0], c
     
     return center .+ rotate_mat2d(ccw_angle) * onaxis_ellipse;
 end
-<<<<<<< HEAD
-
-=======
->>>>>>> New utility functions
