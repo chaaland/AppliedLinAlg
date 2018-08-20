@@ -309,11 +309,11 @@ function augmented_lagrangian(input_output_shape::Tuple{Int64,Int64,Int64}, f::F
         end
 
         if norm(g(xtraj[:,i+1])) <= atol 
-            return xtraj, mu, cume_iters;
+            return xtraj, vec(mu), vec(cume_iters);
         end
     end
 
-    return xtraj, mu, cume_iters
+    return xtraj, vec(mu), vec(cume_iters)
 end
 
 function penalty_algo(input_output_shape::Tuple{Int64,Int64,Int64}, f::Function, J1::Function, g::Function, J2::Function; xinit=Inf, max_iters=1000, atol=1e-6)
@@ -369,11 +369,11 @@ function penalty_algo(input_output_shape::Tuple{Int64,Int64,Int64}, f::Function,
         cume_iters = hcat(cume_iters, cume_iters[i] + size(xvals,2));
 
         if rmse(g(xtraj[:,end])) <= atol 
-            return xtraj, mu, cume_iters 
+            return xtraj, vec(mu), vec(cume_iters)
         end
     end
 
-    return xtraj, mu, cume_iters 
+    return xtraj, vec(mu), vec(cume_iters)
 end
 
 function gauss_newton(input_output_shape::Tuple{Int64,Int64}, f::Function, J::Function; xinit=Inf, max_iters=1000, atol=1e-6)
