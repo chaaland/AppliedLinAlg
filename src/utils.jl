@@ -1,3 +1,5 @@
+using LinearAlgebra;
+# using Statistics;
 
 function rotate_mat2d(angle::T; ccw=true) where T <: Real
     #= Helper for rotating points in 2d space
@@ -114,7 +116,7 @@ function state_propagation_matrix(A::Array{T,2}, B::Array{T,2}, n::Real) where T
 
     C = zeros(num_states, (n - 1) * num_inputs);
 
-    Apow = eye(num_states, num_states)
+    Apow = I
 
     for i in n-1:-1:1
         left = (i - 1) * num_inputs + 1;
@@ -152,20 +154,22 @@ function lqr_matrix(A::Array{T,2}, B::Array{T,2}, C::Array{T,2}, xinit::Array{T,
     n = size(A, 1);
     m = size(B, 2);
     
-    upLeft = eye(tfinal * n, tfinal * n);
+    upLeft = Matrix{Float64}(I, tfinal * n, tfinal * n);
+    # upLeft = eye(tfinal * n, tfinal * n);
     for i in 1:num_time_steps
         lowerInd = n * (i - 1) + 1;
         upperInd = lowerInd + n - 1;
         upLeft[lowerInd:upperInd, lowerInd:upperInd] = C;
     end
 
-    lowRight = sqrt(rho) * eye((tfinal - 1) * m, (tfinal - 1) * m);
+    lowRight = sqrt(rho) * Matrix{Float64}(I, (tfinal - 1) * m, (tfinal - 1) * m);
+    # lowRight = sqrt(rho) * eye((tfinal - 1) * m, (tfinal - 1) * m);
     Atilde = [upLeft zeros(tfinal*n,(tfinal - 1) * m); 
               zeros((tfinal-1) * m, tfinal*n) lowRight];
     btilde = zeros(size(Atilde, 1), 1);
     
     upperLeft = zeros((tfinal - 1) * n, n * tfinal);
-    subMat = [A -eye(n, n)];
+    subMat = [A  Matrix{Float64}(-I, n, n)];
 
     for i in 1:(tfinal-1)
         lowerInd = n*(i-1)+1;
@@ -187,7 +191,8 @@ function lqr_matrix(A::Array{T,2}, B::Array{T,2}, C::Array{T,2}, xinit::Array{T,
         upperColInd += m;
     end
 
-    lowerLeft = [eye(n, n) zeros(n, n * (tfinal - 1))];
+    lowerLeft = [Matrix{Float64}(I, n, n) zeros(n, n * (tfinal - 1))];
+    # lowerLeft = [eye(n, n) zeros(n, n * (tfinal - 1))];
 
     Ctilde = [upperLeft upperRight; lowerLeft zeros(n, m * (tfinal - 1))];
     dtilde = zeros(size(Ctilde,1),1);
@@ -233,18 +238,20 @@ function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function
 
     total_deriv = J(xcurr);
     stop_criteria = rmse(2 * total_deriv' * f(xcurr));
+
     for i in 1:max_iters
         while true
             if m == 1
-                A = vcat(total_deriv, sqrt(lambdavals[i]) * eye(n,n));
+                A = vcat(total_deriv, sqrt(lambdavals[i]) * Matrix{Float64}(I, n, n));
+                # A = vcat(total_deriv, sqrt(lambdavals[i]) * eye(n,n));
                 b = vcat(total_deriv .* xvals[:,i] .- fvals[:,i], sqrt(lambdavals[i]) * xvals[:,i]);
                 xcurr = A \ b;
             else
-                A = vcat(total_deriv, sqrt(lambdavals[i]) * eye(n,n));
+                A = vcat(total_deriv, sqrt(lambdavals[i]) * Matrix{Float64}(I, n, n));
+                #A = vcat(total_deriv, sqrt(lambdavals[i]) * eye(n,n));
                 b = vcat(total_deriv * xvals[:,i] - fvals[:,i], sqrt(lambdavals[i]) * xvals[:,i]);
                 xcurr = A \ b;
             end
-
 
             if norm(f(xcurr)) < norm(fvals[:,i])
                 lambdavals = hcat(lambdavals, lambdavals[i] * 0.8);
@@ -269,7 +276,7 @@ function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function
         end
     end
 
-    return xvals, fvals, stop_criteria, lambdavals
+    return xvals, fvals, vec(stop_criteria), vec(lambdavals)
 end
 
 function augmented_lagrangian(input_output_shape::Tuple{Int64,Int64,Int64}, f::Function, J1::Function, g::Function, J2::Function; xinit=Inf, max_iters=100, atol=1e-6)
@@ -394,7 +401,7 @@ function gauss_newton(input_output_shape::Tuple{Int64,Int64}, f::Function, J::Fu
     Returns :
         xvals : the trajectory of the gradient descent
         fvals : the value of the objective along the trajectory
-        gradnorm : the norm of the jacobian along the trajectory
+        stop_criteria : the norm of the jacobian along the trajectory
 
     =#
 
@@ -410,7 +417,7 @@ function gauss_newton(input_output_shape::Tuple{Int64,Int64}, f::Function, J::Fu
     fvals = vcat(f(xcurr));
 
     total_deriv = J(xcurr);
-    gradnorm = rmse(2*total_deriv' * f(xcurr));
+    stop_criteria = rmse(2*total_deriv' * f(xcurr));
 
     for i=1:max_iters
         if m == 1
@@ -426,13 +433,13 @@ function gauss_newton(input_output_shape::Tuple{Int64,Int64}, f::Function, J::Fu
         xvals = hcat(xvals, xcurr);
         fvals = hcat(fvals, f(xcurr));
         total_deriv = J(xcurr);
-        gradnorm = hcat(gradnorm, rmse(2*total_deriv' * f(xcurr)));
+        stop_criteria = hcat(stop_criteria, rmse(2*total_deriv' * f(xcurr)));
         if rmse(2*total_deriv' * f(xcurr)) <= atol                   # From grad ||f(x)||^2
             break
         end
     end
     
-    return xvals, fvals, gradnorm
+    return xvals, fvals, vec(stop_criteria)
 end
 
 function parametric2ellipse_coords(semiaxis_lengths::Array{T,1}; center=[0 0], ccw_angle=0, numpoints=1000) where T <: Real
@@ -468,7 +475,7 @@ function parametric2ellipse_coords(semiaxis_lengths::Array{T,1}; center=[0 0], c
     center = vec(center);
     semiaxis_lengths = vec(semiaxis_lengths);
     
-    theta = vec(linspace(0, 2*pi, numpoints));
+    theta = vec(range(0, stop=2*pi, length=numpoints));
     onaxis_ellipse = semiaxis_lengths .* [cos.(theta) sin.(theta)]';
     
     return center .+ rotate_mat2d(ccw_angle) * onaxis_ellipse;
