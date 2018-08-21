@@ -1,5 +1,5 @@
 
-function rotate_mat2d{T <: Real}(angle::T; ccw=true)
+function rotate_mat2d(angle::T; ccw=true) where T <: Real
     #= Helper for rotating points in 2d space
     
     Builds the rotation matrix specified by the angle and the direction of rotation
@@ -57,8 +57,8 @@ function rmse(x; y=0)
         sqrt(1/N * (sum((x_i - y_i)^2)))
     =#
 
-    squared_diff = (x - y).^2;
-    mean_square_error = mean(squared_diff);
+    squared_diff = (x .- y).^2;
+    mean_square_error = sum(squared_diff) / length(squared_diff)
 
     return sqrt(mean_square_error)
 end
