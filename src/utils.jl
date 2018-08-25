@@ -1,5 +1,5 @@
 using LinearAlgebra;
-# using Statistics;
+using Statistics;
 
 function rotate_mat2d(angle::T; ccw=true) where T <: Real
     #= Helper for rotating points in 2d space
@@ -60,7 +60,7 @@ function rmse(x; y=0)
     =#
 
     squared_diff = (x .- y).^2;
-    mean_square_error = sum(squared_diff) / length(squared_diff)
+    mean_square_error = mean(squared_diff);
 
     return sqrt(mean_square_error)
 end
@@ -282,15 +282,6 @@ function constrained_least_squares(A::Array{T,2}, b::Vector{T}, C::Array{T,2}, d
     return xstar
 end
 
-function constrained_least_squares_kkt(A::Array{T,2}, b::Vector{T}, C::Array{T,2}, d::Vector{T}) where T <: Real
-    k = size(C,1);
-    kktMatrix = [2*A'*A C'; 
-                C zeros(k, k)];
-    kktRHS = [2*A'*b; d];
-    
-    return kktMatrix, kktRHS
-end
-
 function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function, J::Function; xinit=Inf, max_iters=1000, atol=1e-6)
     #= Implements the levenberg marquardt heuristic for finding roots of m nonlinear equations in n unknowns
     
@@ -313,6 +304,7 @@ function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function
         gradnorm : the norm of the gradient along the trajectory
         lambdavals : the values of the penalty parameter for each iteration of the algo
     =#
+
     LAMBDA_MAXIMUM = 1e10;
     STEPSZ_MINIMUM = 1e-5;
 
@@ -378,6 +370,7 @@ function augmented_lagrangian(input_output_shape::Tuple{Int64,Int64,Int64}, f::F
     Returns :
      
     =#
+
     n = input_output_shape[1];
     m = input_output_shape[2];
     p = input_output_shape[3];
