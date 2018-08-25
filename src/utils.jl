@@ -132,75 +132,161 @@ function propagate_linear_dyanmical_system(A::Array{T,2}, B::Array{T,2}, U::Arra
     #= Given the initial state, the inputs and the matrices for an LDS compute the trajectory
     
     Simulate the LDS given the inputs, inital state, the input-output matrix and the state 
-    transitino matrix.
+    transitino matrix. The discrete time linear dynamical system has recurrence
+
+                    x[k] = A * x[k-1] + B * u[k-1]
+
+    Args :
+        A : The n x n state evolution matrix
+        B : Input to Output matrix of size m x n
+        U : Inputs matrix of size m x (T - 1) where each input is a column
+        xinit : Initial state of the system
+    
+    Returns :
+        X : states of size n x T where each column is a state at time point k
     =#
 
-    num_states = size(A, 1);
-    num_inputs = size(U, 1);
-    num_time_steps = size(U, 2);
+    state_dim = size(A, 1);
+    input_dim = size(U, 1);
+    num_inputs = size(U, 2);
 
     xinit = vec(xinit);
-    states = zeros(num_states, num_time_steps + 1);
+    X = zeros(state_dim, num_inputs + 1);
 
-    states[:,1] = xinit;
-    for i in 1:num_time_steps
-        states[:, i+1] = A * states[:,i] + B * U[:,i];
+    X[:,1] = xinit;
+    for i in 1:num_inputs
+        X[:, i+1] = A * states[:,i] + B * U[:,i];
     end
      
-    return states
+    return X
 end
 
-function lqr_matrix(A::Array{T,2}, B::Array{T,2}, C::Array{T,2}, xinit::Array{T,1}, tfinal::N, rho::Real) where T <: Real where N <: Int64
+function propagate_linear_dyanmical_system_with_state_feedback(A::Array{T,2}, B::Array{T,2}, K::Array{T,2}, tfinal::N, 
+                                                          xinit::Array{T,1}) where T <: Real where N <:Int64
+    #= Given the initial state, the state feedback matrix and the matrices for an LDS compute the trajectory
+    
+    Simulate the LDS using state feedback control. The discrete time linear dynamical 
+    system with state feedback control is given by 
+
+                    x[k] = (A + B * K) * x[k-1] 
+
+    Args :
+        A : The n x n state evolution matrix
+        B : Input to Output matrix of size m x n
+        K : time invariant state feedback control matrix
+        xinit : Initial state of the system
+    
+    Returns :
+        X : states matrix of size n x T where each column is a state at time point k
+        U : inputs of state feedback controller given as m x (T - 1)
+    =#
+
+    state_dim = size(A, 1);
+    input_dim = size(B, 2);
+
+    X = zeros(state_dim, tfinal);
+    U = zeros(input_dim, tfinal - 1);
+    X[:,1] = xinit;
+   
+    for i in 2:tfinal
+        U[:,i-1] = K * X[:,i-1];
+        X[:,i] = A * X[:,i-1] + B * U[:,i-1];
+    end
+
+    return X, U;
+end
+
+function lqr_matrix(A::Array{T,2}, B::Array{T,2}, C::Array{T,2}, xinit::Vector{T}, tfinal::N, rho::Real) where T <: Real where N <: Int64
+    #= Creates the large block matrix needed for linear quadratic control
+
+    The linear quadratic control problem can be expressed as a least squares problem
+
+            minimize    ||Atilde * x - btilde||^2
+            subject to  Ctilde * x = dtilde
+
+    This function returns the matrices needed for the problem formulation
+
+    Args :
+        A : The n x n state evolution matrix
+        B : Input to Output matrix of size m x n 
+        C : Input to Observation matrix of size p x n
+        xinit : initial state of the system as an n x 1 vector
+        tfinal : determines the number of inputs to choose for the linear quadratic control problem
+        rho : weighting of the input norm in the least squares objective trading off state size with input size
+
+    Returns :
+        The matrices needed to formulate the constrained least squares problem for linear quadratic control
+        
+    =#
     n = size(A, 1);
     m = size(B, 2);
     
     upLeft = Matrix{Float64}(I, tfinal * n, tfinal * n);
-    # upLeft = eye(tfinal * n, tfinal * n);
-    for i in 1:num_time_steps
+    for i in 1:tfinal
         lowerInd = n * (i - 1) + 1;
         upperInd = lowerInd + n - 1;
         upLeft[lowerInd:upperInd, lowerInd:upperInd] = C;
     end
 
-    lowRight = sqrt(rho) * Matrix{Float64}(I, (tfinal - 1) * m, (tfinal - 1) * m);
-    # lowRight = sqrt(rho) * eye((tfinal - 1) * m, (tfinal - 1) * m);
-    Atilde = [upLeft zeros(tfinal*n,(tfinal - 1) * m); 
-              zeros((tfinal-1) * m, tfinal*n) lowRight];
-    btilde = zeros(size(Atilde, 1), 1);
+    lowRight = Matrix{Float64}(sqrt(rho) * I, (tfinal - 1) * m, (tfinal - 1) * m);
+    Atilde = [upLeft zeros(tfinal * n, (tfinal - 1) * m); 
+              zeros((tfinal - 1) * m, tfinal * n) lowRight];
+    btilde = zeros(size(Atilde, 1));
     
     upperLeft = zeros((tfinal - 1) * n, n * tfinal);
     subMat = [A  Matrix{Float64}(-I, n, n)];
 
-    for i in 1:(tfinal-1)
-        lowerInd = n*(i-1)+1;
-        upperColInd = lowerInd + 2*n - 1;
+    for i in 1:(tfinal - 1)
+        lowerInd = n * (i - 1) + 1;
+        upperColInd = lowerInd + 2 * n - 1;
         upperRowInd = lowerInd + n - 1;
         upperLeft[lowerInd:upperRowInd, lowerInd:upperColInd] = subMat;
     end
 
     upperRight = zeros(n * (tfinal - 1), m * (tfinal - 1));
-    lowerRowInd = 1;
-    lowerColInd = 1;
-    upperRowInd = n;
-    upperColInd = m;
     for i in 1:(tfinal - 1)
+        lowerRowInd = (i - 1) * n + 1;
+        lowerColInd = (i - 1) * m + 1;
+        upperRowInd = i * n;
+        upperColInd = i * m;
         upperRight[lowerRowInd:upperRowInd,lowerColInd:upperColInd] = B;
-        lowerRowInd += n;
-        lowerColInd += m;
-        upperRowInd += n;
-        upperColInd += m;
     end
 
     lowerLeft = [Matrix{Float64}(I, n, n) zeros(n, n * (tfinal - 1))];
-    # lowerLeft = [eye(n, n) zeros(n, n * (tfinal - 1))];
 
-    Ctilde = [upperLeft upperRight; lowerLeft zeros(n, m * (tfinal - 1))];
-    dtilde = zeros(size(Ctilde,1),1);
+    Ctilde = [upperLeft upperRight; 
+             lowerLeft zeros(n, m * (tfinal - 1))];
+    dtilde = zeros(size(Ctilde,1));
     dtilde[end-n+1:end,1] = xinit;
     
-    return Atilde, Ctilde, dtilde
+    return Atilde, vec(btilde), Ctilde, vec(dtilde)
 end
 
+function constrained_least_squares(A::Array{T,2}, b::Vector{T}, C::Array{T,2}, d::Vector{T}) where T <: Real
+    #= Solves the constrained least squares problem
+
+    Given a least squares problem of the form 
+        minimize    ||Ax - b||^2
+        subject to  Cx = d
+    
+    Args :
+        A : m x n matrix
+        b : m x 1 vector
+        C : p x n matrix
+        d : p x 1 vector
+    
+    Returns :
+        xstar : solution of the constrained least squares problem
+    =#
+
+    k = size(C,1)
+    kktMatrix = [2*A'*A C'; 
+                C zeros(k, k)];
+    kktRHS = [2*A'*b; d];
+    xstar = kktMatrix \ kktRHS;
+
+    return xstar
+end
 
 function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function, J::Function; xinit=Inf, max_iters=1000, atol=1e-6)
     #= Implements the levenberg marquardt heuristic for finding roots of m nonlinear equations in n unknowns
