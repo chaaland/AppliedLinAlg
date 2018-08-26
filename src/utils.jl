@@ -154,7 +154,7 @@ function propagate_linear_dyanmical_system(A::Array{T,2}, B::Array{T,2}, U::Arra
 
     X[:,1] = xinit;
     for i in 1:num_inputs
-        X[:, i+1] = A * states[:,i] + B * U[:,i];
+        X[:, i+1] = A * X[:,i] + B * U[:,i];
     end
      
     return X
@@ -363,12 +363,25 @@ function levenberg_marquardt(input_output_shape::Tuple{Int64,Int64}, f::Function
     return xvals, fvals, vec(stop_criteria), vec(lambdavals)
 end
 
-function augmented_lagrangian(input_output_shape::Tuple{Int64,Int64,Int64}, f::Function, J1::Function, g::Function, J2::Function; xinit=Inf, max_iters=100, atol=1e-6)
+function augmented_lagrangian(input_output_shape::Tuple{Int64,Int64,Int64}, f::Function, J1::Function, 
+                              g::Function, J2::Function; xinit=Inf, max_iters=100, atol=1e-6)
     #= Solves the constrained non-linear least squares by augmenting the lagrangian with the penalty objective.
 
-    Args :
+     Args :
+        input_output_shape : a tuple of the form (n, m, p) giving the number of variables
+                             ,the number of outputs, and number of constraints respectively
+        f : a function that takes 'n' inputs and returns m outputs
+        J1 : a function to evaluate the Jacobian of 'f'
+        g : a function that takes 'n' inputs and returns p outputs
+        J2 : a functtion to evaluate the Jacobian of 'g'
+        xinit : an initial point used for warm starting the algo
+        max_iters : maximum number of iterations 
+        atol : tolerance of the root mean square error of the equality condition
+        
     Returns :
-     
+        xtraj : the sequence of iterates in the minimization
+        mu : the sequence of penalties
+        cume_iters : the cumulative number of levenberg-marquardt iterations
     =#
 
     n = input_output_shape[1];
@@ -408,7 +421,8 @@ function augmented_lagrangian(input_output_shape::Tuple{Int64,Int64,Int64}, f::F
     return xtraj, vec(mu), vec(cume_iters)
 end
 
-function penalty_algo(input_output_shape::Tuple{Int64,Int64,Int64}, f::Function, J1::Function, g::Function, J2::Function; xinit=Inf, max_iters=1000, atol=1e-6)
+function penalty_algo(input_output_shape::Tuple{Int64,Int64,Int64}, f::Function, J1::Function, 
+                      g::Function, J2::Function; xinit=Inf, max_iters=1000, atol=1e-6)
     #= Naive penalty algo for non-linear equality constrained optimization
     
     A method for solving the minimization of ||f(x)||^2 subject to g(x) = 0 
@@ -420,8 +434,8 @@ function penalty_algo(input_output_shape::Tuple{Int64,Int64,Int64}, f::Function,
     as a heuristic (where mu is steadily increased each iteration).
 
     Args :
-        input_output_shape : a tuple of the form (n, m) giving the number of variables
-                             and the number of outputs respectively
+        input_output_shape : a tuple of the form (n, m, p) giving the number of variables
+                             ,the number of outputs, and number of constraints respectively
         f : a function that takes 'n' inputs and returns m outputs
         J1 : a function to evaluate the Jacobian of 'f'
         g : a function that takes 'n' inputs and returns p outputs
@@ -433,6 +447,7 @@ function penalty_algo(input_output_shape::Tuple{Int64,Int64,Int64}, f::Function,
     Returns :
         xtraj : the sequence of iterates in the minimization
         mu : the sequence of penalties
+        cume_iters : the cumulative number of levenberg-marquardt iterations
     =#
 
     n = input_output_shape[1];
